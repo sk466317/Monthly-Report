@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cost Approval Form</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- SheetJS (XLSX) library for proper .xlsx export -->
+    <script src="https://unpkg.com/xlsx-js-style@1.2.0/dist/xlsx.min.js"></script>
     <style>
         /* Custom CSS Excel Grid ke liye */
         body {
@@ -24,6 +26,9 @@
                 print-color-adjust: exact !important;
             }
             .toolbar, .formula-bar-container {
+                display: none !important;
+            }
+            .table-delete-checkbox {
                 display: none !important;
             }
             .spreadsheet-container {
@@ -70,7 +75,7 @@
         .spreadsheet-container {
             flex-grow: 1;
             overflow: auto;
-            padding: 20px;
+            padding: 5px;
             background-color: #e6e6e6;
         }
 
@@ -78,18 +83,40 @@
             background-color: white;
             padding: 20px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            width: 85%; /* Compact fit */
+            width: 100%;
             margin: 0 auto;
         }
 
-        table {
+        /* FLEXBOX LAYOUT - Keeps Left and Right completely independent in height */
+        .layout-wrapper {
+            display: flex;
+            align-items: flex-start;
+            gap: 15px;
+            width: 100%;
+        }
+        .left-column {
+            flex: 0 0 78%;
+            width: 78%;
+        }
+        .right-column {
+            flex: 0 0 21%;
+            width: 21%;
+        }
+
+        table.data-table {
             border-collapse: collapse;
             width: 100%;
-            table-layout: auto;
+            table-layout: fixed; 
+            margin-bottom: 20px;
+        }
+
+        /* Add spacing between dynamic tariff tables */
+        #dynamic_tables_container table.data-table {
+            margin-bottom: 30px;
         }
 
         /* Wrap Text Enforcement */
-        th, td {
+        table.data-table th, table.data-table td {
             border: 1px solid #888;
             padding: 6px 8px;
             font-size: 13px;
@@ -97,12 +124,11 @@
             white-space: pre-wrap !important;
             word-wrap: break-word !important;
             overflow-wrap: break-word !important;
-            max-width: 150px; /* Forces wrap on wide content */
         }
 
         /* Specialized Cell Styles */
         .title-cell {
-            background-color: #1e3a8a; /* Dark Blue */
+            background-color: #1e3a8a;
             color: white;
             font-weight: bold;
             font-size: 16px;
@@ -116,7 +142,7 @@
         }
 
         .header-cell {
-            background-color: #dbeafe; /* Light Blue Excel header */
+            background-color: #dbeafe;
             font-weight: bold;
             text-align: center;
             color: #1e3a8a;
@@ -141,7 +167,7 @@
 
         /* Shippers Name Box Extra Formatting */
         .shippers-box-header {
-            background-color: #fef08a !important; /* Yellow 200 */
+            background-color: #fef08a !important;
             border-left: 2px solid #1e3a8a !important;
             border-top: 2px solid #1e3a8a !important;
             border-right: 2px solid #1e3a8a !important;
@@ -152,7 +178,8 @@
             border-right: 2px solid #1e3a8a !important;
             vertical-align: top;
             text-align: left;
-            max-width: 250px; /* Thoda wide rakha hai wrap ke liye */
+            min-height: 360px;
+            height: 100%;
         }
 
         /* Button styling */
@@ -183,6 +210,14 @@
             cursor: pointer;
             white-space: normal;
         }
+        
+        /* 2nd table zoom 70% to prevent wrapping */
+        .tariff-zoom {
+            zoom: 0.7;
+            -moz-transform: scale(0.7);
+            -moz-transform-origin: left top;
+            transform-origin: left top;
+        }
     </style>
 </head>
 <body>
@@ -198,13 +233,14 @@
         <button class="btn underline" onclick="formatText('underline')">U</button>
         
         <div class="ml-auto flex gap-2 items-center">
-            <!-- Yahan All Records Box Linked Kiya Gaya Hai -->
-            <select id="cloudHistory" onchange="loadRecordFromDropdown()" class="border border-blue-300 rounded px-2 py-1 text-xs w-48 text-blue-900 font-bold bg-blue-50 outline-none shadow cursor-pointer">
+            <span class="text-sm font-bold text-gray-700 whitespace-nowrap">Search Cost Sheet:</span>
+            <select id="cloudHistory" onchange="loadRecordFromDropdown()" class="border border-blue-300 rounded px-2 py-1 text-xs w-96 text-blue-900 font-bold bg-blue-50 outline-none shadow cursor-pointer">
                 <option value="">-- All Records --</option>
             </select>
 
             <button class="btn bg-orange-100 text-orange-800 border-orange-300 shadow" onclick="addNewTable()">➕ Add New Table</button>
-            <button class="btn bg-green-100 text-green-800 border-green-300 shadow" onclick="exportToExcel()">📊 Export Excel</button>
+            <button class="btn bg-red-100 text-red-800 border-red-300 shadow" onclick="deleteSelectedTables()">🗑️ Delete Table</button>
+            <button class="btn bg-green-100 text-green-800 border-green-300 shadow" onclick="exportToExcelXLSX()">📊 Export Excel (XLSX)</button>
             <button class="btn bg-blue-100 text-blue-800 border-blue-300 shadow" onclick="window.print()">🖨️ Print / PDF</button>
         </div>
     </div>
@@ -217,102 +253,123 @@
 
     <!-- Grid Container -->
     <div class="spreadsheet-container">
-        <div class="excel-sheet">
-            <!-- Single Unified Table Container -->
-            <table id="spreadsheet" class="w-full">
-                <tbody id="main_tbody">
-                    <!-- Row 1: Title + Shippers Name Header -->
-                    <tr>
-                        <td colspan="12" class="title-cell" contenteditable="true">Request for Cost Approval:: Exports (KILARAIPUR-MUNDRA)</td>
-                        <td colspan="2" class="label-cell text-right">Dated:</td>
-                        <td colspan="2" contenteditable="true" class="font-bold data-cell">17-03-2026 11:27</td>
-                        <!-- Shippers Name Box Header (Parallel to Dated) -->
-                        <td colspan="4" class="header-cell shippers-box-header uppercase">Customer List</td>
-                    </tr>
-                    <!-- Row 2: Content + Shippers Name Data (Dynamic Rowspan) -->
-                    <tr>
-                        <td colspan="4" class="label-cell">Name of the Customer</td>
-                        <td colspan="4" id="ui_customerName" contenteditable="true"></td>
-                        <td colspan="4" class="label-cell">Billing Terms</td>
-                        <td colspan="4" id="ui_billingTerms" contenteditable="true"></td>
-                        <!-- Shippers Name Content Box (Spans down dynamically) -->
-                        <td colspan="4" rowspan="10" id="shippers_content_box" contenteditable="true" class="data-cell bg-white shippers-box-content"></td>
-                    </tr>
-                    <tr>
-                        <td colspan="4" class="label-cell">Cargo Type</td>
-                        <td colspan="4" class="data-cell" style="padding: 0;">
-                            <select id="ui_commodity" class="cell-dropdown text-gray-700">
-                                <option value="">-- Select --</option>
-                                <option value="AGRI COMMODITY">AGRI COMMODITY</option>
-                                <option value="NON-AGRI COMMODITY">NON AGRI COMMODITY</option>
-                            </select>
-                        </td>
-                        <td colspan="4" class="label-cell">Sales Person</td>
-                        <td colspan="4" class="data-cell" style="padding: 0;">
-                            <select id="ui_salesPerson" class="cell-dropdown text-gray-700">
-                                <option value="">-- Select --</option>
-                                <option value="ANURAG PANDEY">ANURAG PANDEY</option>
-                                <option value="CHIRAG RANA">CHIRAG RANA</option>
-                                <option value="HARSIMRANJEET SINGH">HARSIMRANJIT SINGH</option>
-                                <option value="KUNAL SAHI">KUNAL SAHI</option>
-                                <option value="MOHIK SHARMA">MOHIK SHARMA</option>
-                                <option value="RAJESH KUMAR">RAJESH KUMAR</option>
-                                <option value="DAMANJIT SINGH">DAMANJIT SINGH</option>
-                                <option value="RAJEEV SHARMA">RAJEEV SHARMA</option>
-                            </select>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td colspan="4" class="label-cell">Offer Validity Start</td>
-                        <td colspan="4" id="ui_validityStart" contenteditable="true"></td>
-                        <td colspan="4" class="label-cell">Offer Validity End</td>
-                        <td colspan="4" id="ui_validityEnd" contenteditable="true"></td>
-                    </tr>
-                    <tr>
-                        <td colspan="4" class="label-cell">Customer Status</td>
-                        <td colspan="4" id="ui_customerType" contenteditable="true"></td>
-                        <td colspan="4" class="label-cell">Volume Indication</td>
-                        <td colspan="4" id="ui_volMonth" contenteditable="true"></td>
-                    </tr>
-                    <tr>
-                        <td colspan="4" class="label-cell">Payment Terms & Credit Days</td>
-                        <td colspan="4" id="ui_creditDays" contenteditable="true"></td>
-                        <td colspan="4" class="label-cell">THC Subsidy</td>
-                        <td colspan="4" id="ui_remTHC" contenteditable="true"></td>
-                    </tr>
-                    <tr>
-                        <td colspan="4" class="label-cell">CHA Involved</td>
-                        <td colspan="4" id="ui_chaInvolved" contenteditable="true"></td>
-                        <td colspan="4" class="label-cell">THC Subsidy Claim By</td>
-                        <td colspan="4" id="ui_thcClaimBy" contenteditable="true"></td>
-                    </tr>
-                    <tr>
-                        <td colspan="4" class="label-cell">CHA Incentive Remarks</td>
-                        <td colspan="4" id="ui_chaIncRem" contenteditable="true"></td>
-                        <td colspan="4" class="label-cell">Transport Vendor</td>
-                        <td colspan="4" id="ui_transVendor" contenteditable="true"></td>
-                    </tr>
-                    <tr>
-                        <td colspan="4" class="label-cell">Incentive Claim By</td>
-                        <td colspan="4" id="ui_incClaimBy" contenteditable="true"></td>
-                        <td colspan="4" class="label-cell">Transport Rates</td>
-                        <td colspan="4" id="ui_transRates" contenteditable="true"></td>
-                    </tr>
-                    <tr>
-                        <td colspan="4" class="label-cell">Forwarder involved::</td>
-                        <td colspan="4" id="ui_fwdInvolved" contenteditable="true"></td>
-                        <td colspan="4" class="label-cell">TPT Subsidy Claim By</td>
-                        <td colspan="4" id="ui_tptClaimBy" contenteditable="true"></td>
-                    </tr>
-                    <tr>
-                        <td colspan="4" class="label-cell">Incentive Claim By::</td>
-                        <td colspan="4" id="ui_incClaimBy2" contenteditable="true"></td>
-                        <td colspan="4" class="label-cell">Special Remarks</td>
-                        <td colspan="4" id="ui_remSpecial" contenteditable="true"></td>
-                    </tr>
-                    <!-- Yahan se Dynamic Tariff Blocks inject honge -->
-                </tbody>
-            </table>
+        <div class="excel-sheet" id="export_container">
+            
+            <div class="layout-wrapper">
+                <!-- LEFT COLUMN (Top Info Table & Tariff Tables) -->
+                <div class="left-column">
+                    <table class="data-table" id="top_info_table">
+                        <colgroup>
+                            <col span="12" style="width: 8.33%;">
+                        </colgroup>
+                        <tbody>
+                            <tr>
+                                <td colspan="8" class="title-cell" contenteditable="true">Request for Cost Approval:: Exports (KILARAIPUR-MUNDRA)</td>
+                                <td colspan="2" class="label-cell text-right">Dated:</td>
+                                <td colspan="2" contenteditable="true" class="font-bold data-cell">17-03-2026 11:27</td>
+                            </tr>
+                            <tr>
+                                <td colspan="3" class="label-cell">Name of the Customer</td>
+                                <td colspan="3" id="ui_customerName" contenteditable="true"></td>
+                                <td colspan="3" class="label-cell">Billing Terms</td>
+                                <td colspan="3" id="ui_billingTerms" contenteditable="true"></td>
+                            </tr>
+                            <tr>
+                                <td colspan="3" class="label-cell">Cargo Type</td>
+                                <td colspan="3" class="data-cell" style="padding: 0;">
+                                    <select id="ui_commodity" class="cell-dropdown text-gray-700">
+                                        <option value="">-- Select --</option>
+                                        <option value="AGRI COMMODITY">AGRI COMMODITY</option>
+                                        <option value="NON-AGRI COMMODITY">NON AGRI COMMODITY</option>
+                                    </select>
+                                </td>
+                                <td colspan="3" class="label-cell">Sales Person</td>
+                                <td colspan="3" class="data-cell" style="padding: 0;">
+                                    <select id="ui_salesPerson" class="cell-dropdown text-gray-700">
+                                        <option value="">-- Select --</option>
+                                        <option value="ANURAG PANDEY">ANURAG PANDEY</option>
+                                        <option value="CHIRAG RANA">CHIRAG RANA</option>
+                                        <option value="HARSIMRANJEET SINGH">HARSIMRANJIT SINGH</option>
+                                        <option value="KUNAL SAHI">KUNAL SAHI</option>
+                                        <option value="MOHIK SHARMA">MOHIK SHARMA</option>
+                                        <option value="RAJESH KUMAR">RAJESH KUMAR</option>
+                                        <option value="DAMANJIT SINGH">DAMANJIT SINGH</option>
+                                        <option value="RAJEEV SHARMA">RAJEEV SHARMA</option>
+                                    </select>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td colspan="3" class="label-cell">Offer Validity Start</td>
+                                <td colspan="3" id="ui_validityStart" contenteditable="true"></td>
+                                <td colspan="3" class="label-cell">Offer Validity End</td>
+                                <td colspan="3" id="ui_validityEnd" contenteditable="true"></td>
+                            </tr>
+                            <tr>
+                                <td colspan="3" class="label-cell">Customer Status</td>
+                                <td colspan="3" id="ui_customerType" contenteditable="true"></td>
+                                <td colspan="3" class="label-cell">Volume Indication</td>
+                                <td colspan="3" id="ui_volMonth" contenteditable="true"></td>
+                            </tr>
+                            <tr>
+                                <td colspan="3" class="label-cell">Payment Terms & Credit Days</td>
+                                <td colspan="3" id="ui_creditDays" contenteditable="true"></td>
+                                <td colspan="3" class="label-cell">THC Subsidy</td>
+                                <td colspan="3" id="ui_remTHC" contenteditable="true"></td>
+                            </tr>
+                            <tr>
+                                <td colspan="3" class="label-cell">CHA Involved</td>
+                                <td colspan="3" id="ui_chaInvolved" contenteditable="true"></td>
+                                <td colspan="3" class="label-cell">THC Subsidy Claim By</td>
+                                <td colspan="3" id="ui_thcClaimBy" contenteditable="true"></td>
+                            </tr>
+                            <tr>
+                                <td colspan="3" class="label-cell">CHA Incentive Remarks</td>
+                                <td colspan="3" id="ui_chaIncRem" contenteditable="true"></td>
+                                <td colspan="3" class="label-cell">Transport Vendor</td>
+                                <td colspan="3" id="ui_transVendor" contenteditable="true"></td>
+                            </tr>
+                            <tr>
+                                <td colspan="3" class="label-cell">Incentive Claim By</td>
+                                <td colspan="3" id="ui_incClaimBy" contenteditable="true"></td>
+                                <td colspan="3" class="label-cell">Transport Rates</td>
+                                <td colspan="3" id="ui_transRates" contenteditable="true"></td>
+                            </tr>
+                            <tr>
+                                <td colspan="3" class="label-cell">Forwarder involved::</td>
+                                <td colspan="3" id="ui_fwdInvolved" contenteditable="true"></td>
+                                <td colspan="3" class="label-cell">TPT Subsidy Claim By</td>
+                                <td colspan="3" id="ui_tptClaimBy" contenteditable="true"></td>
+                            </tr>
+                            <tr>
+                                <td colspan="3" class="label-cell">Incentive Claim By::</td>
+                                <td colspan="3" id="ui_incClaimBy2" contenteditable="true"></td>
+                                <td colspan="3" class="label-cell">Special Remarks</td>
+                                <td colspan="3" id="ui_remSpecial" contenteditable="true"></td>
+                            </tr>
+                        </tbody>
+                    </table>
+
+                    <!-- Dynamic Tariff Tables Container -->
+                    <div id="dynamic_tables_container">
+                        <!-- Yahan se Dynamic Tariff Blocks inject honge -->
+                    </div>
+                </div>
+
+                <!-- RIGHT COLUMN (Customer List / Shippers Name) -->
+                <div class="right-column">
+                    <table class="data-table" style="height: 100%; margin-bottom: 0;" id="shippers_table">
+                        <tbody>
+                            <tr>
+                                <td class="header-cell shippers-box-header uppercase" style="height: 33px;">Shippers Name</td>
+                            </tr>
+                            <tr>
+                                <td id="shippers_content_box" contenteditable="true" class="data-cell bg-white shippers-box-content"></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
         </div>
     </div>
 
@@ -350,16 +407,13 @@
         };
         ['OOCL','SEABRIDGE','ONE LINE'].forEach(k=>lineData[k]=lineData['OTHER']);
 
-        let tableCount = 0; // Tracks number of dynamic tables
+        let tableCount = 0;
 
-        // Page Load hone par ek table generate karein aur data fetch karein
         window.onload = () => {
             fetchSheetData();
         };
 
-        // --- GOOGLE SHEETS DATA FETCH LOGIC ---
         function fetchSheetData() {
-            // Update loading status temporarily on the select box
             const sel = document.getElementById('cloudHistory');
             sel.innerHTML = '<option value="">-- Syncing... --</option>';
 
@@ -386,7 +440,7 @@
                 });
                 
                 repopulateDropdowns();
-                addNewTable(); // Add default empty table after sync is complete
+                addNewTable();
             };
             const s = document.createElement('script');
             s.src = `https://docs.google.com/spreadsheets/d/${CONFIG.SHEET_ID}/gviz/tq?tqx=responseHandler:handleGvizResponse&tq=SELECT%20A,B,C,D,E&t=${new Date().getTime()}`;
@@ -397,7 +451,6 @@
             const sel = document.getElementById('cloudHistory');
             sel.innerHTML = '<option value="">-- All Records --</option>';
             sheetRecords.forEach((r, i) => {
-                // Show records (ignoring approval specific logic just to display all lists for now)
                 const isApp = (r.parsedData.isApproval === true || r.parsedData.isApproval === "true");
                 if(!isApp) { 
                     const opt = document.createElement('option');
@@ -408,7 +461,6 @@
             });
         }
 
-        // --- POPULATE DATA WHEN RECORD IS SELECTED ---
         function loadRecordFromDropdown() {
             const index = document.getElementById('cloudHistory').value;
             if (index === "") return;
@@ -416,7 +468,6 @@
             if (!r) return;
             const d = r.parsedData;
 
-            // Set Top Table Fields Function
             const setVal = (id, val) => {
                 const el = document.getElementById(id);
                 if(el) {
@@ -425,7 +476,6 @@
                 }
             };
 
-            // Mapping Headers provided by user (Tariff Table mapping skip kar di gayi hai jaisa kaha tha)
             setVal('ui_customerName', d.basic?.cust);
             setVal('ui_commodity', d.basic?.comm);
             setVal('ui_billingTerms', d.basic?.bill);
@@ -437,31 +487,21 @@
             setVal('ui_remTHC', d.remarks?.thc);
             setVal('ui_remSpecial', d.remarks?.special);
 
-            // Transport Remarks Mapping
             let transRem = d.transport && d.transport.length > 0 ? d.transport.map(t => t.remarks).join('\n') : '';
             setVal('ui_transVendor', transRem);
 
-            // Incentive Remarks Mapping
             let incRem = d.incentives && d.incentives.length > 0 ? d.incentives.map(i => i.remarks).join('\n') : '';
             setVal('ui_chaIncRem', incRem);
             setVal('ui_incClaimBy', incRem);
 
-            // Customer List mapping to Shippers Name Box
             let shippersText = d.customers && d.customers.length > 0 ? d.customers.map(c => c.name).join('\n') : '';
             setVal('shippers_content_box', shippersText);
-
-            // "Niche wali Tariff Tables ka data nahi fill karna"
-            // Isliye Tariff Tables ko populate karne wala hissa yahan add NAHI kiya gaya hai.
-            // Wo default condition mein hi rahengi.
         }
-        // ----------------------------------------------------
 
-        // Table Data calculation aur mapping Logic
         function updateTable(tId) {
             const type = document.getElementById(`sel_type_${tId}`).value;
             const line = document.getElementById(`sel_line_${tId}`).value;
 
-            // Stream Name Update 
             document.getElementById(`lbl_stream_${tId}`).innerText = line + "-MUNDRA";
 
             const sData = subsidyData[type] || subsidyData['FACTORY'];
@@ -472,12 +512,10 @@
                 const m = slabs[i].m;
                 const eis = (i >= 5) ? 2000 : 1000;
                 
-                // User inputs (Editable cells)
                 const disc = parseInt(document.getElementById(`disc_${tId}_${i}`).innerText) || 0;
                 const inc = parseInt(document.getElementById(`inc_${tId}_${i}`).innerText) || 0;
                 const subfac = parseInt(document.getElementById(`subfac_${tId}_${i}`).innerText) || 0;
                 
-                // Line Data Mapping
                 const slb = lData.bss[i];   
                 const slr = lData.rail[i];  
                 const sub = sData[i];       
@@ -486,13 +524,11 @@
                 const slf = lData.fs[i];    
                 const sls = lData.self[i];  
 
-                // Margin Calculations
                 const base_deductions = disc + inc + slb + slr + sub + subfac;
                 const margin_wh = m - base_deductions - slw;
                 const margin_fs = m - base_deductions - slf;
                 const margin_self = m - base_deductions - sls;
 
-                // Push Data into HTML tags
                 document.getElementById(`pub_${tId}_${i}`).innerText = p;
                 document.getElementById(`rm_${tId}_${i}`).innerText = m;
                 document.getElementById(`eis_${tId}_${i}`).innerText = eis;
@@ -511,16 +547,13 @@
             }
         }
 
-        // Negative values helper
         function formatNegative(el, val) {
             el.innerText = val;
             if (val < 0) el.classList.add('text-red-600');
             else el.classList.remove('text-red-600');
         }
 
-        // Dropdown Color Update Logic (Location colors)
         function updateColor(tId) {
-            // Type (Location) Colors
             const typeVal = document.getElementById(`sel_type_${tId}`).value;
             const tdType = document.getElementById(`td_type_${tId}`);
             
@@ -531,50 +564,62 @@
             else if(typeVal === "Double -2x20\"") tdType.classList.add("bg-purple-200");
         }
 
-        // Function to Add New Tariff Table block
+        function deleteSelectedTables() {
+            const checkboxes = document.querySelectorAll('.table-delete-checkbox:checked');
+            checkboxes.forEach(cb => {
+                const wrapper = document.getElementById(cb.value);
+                if (wrapper) wrapper.remove();
+            });
+        }
+
         function addNewTable() {
             const tId = tableCount++;
-            const tbody = document.getElementById('main_tbody');
+            const container = document.getElementById('dynamic_tables_container');
             
             let html = `
-                <tbody id="tariff_block_${tId}">
-                <tr><td colspan="16" style="border:none; height:20px;"></td></tr>
-                <tr>
-                    <td colspan="3" class="label-cell">Shipping Line & Stream::</td>
-                    <!-- ALWAYS YELLOW DATA CELL FOR STREAM -->
-                    <td colspan="3" id="lbl_stream_${tId}" class="font-bold text-blue-900 data-cell bg-yellow-200">COSCO-MUNDRA</td>
-                    <td colspan="2" class="label-cell">Stuffing Location::</td>
-                    <td colspan="3" id="td_type_${tId}" class="data-cell bg-yellow-200" style="padding: 0;">
-                        <select id="sel_type_${tId}" onchange="updateTable(${tId}); updateColor(${tId});" class="cell-dropdown">
-                            <option value="FACTORY">FACTORY</option>
-                            <option value="OWPL">OWPL</option>
-                            <option value="PSWC">PSWC</option>
-                            <option value="Double -2x20&quot;">Double -2x20"</option>
-                        </select>
-                    </td>
-                    <td colspan="2" class="label-cell">Line:</td>
-                    <td colspan="3" class="data-cell bg-blue-50" style="padding: 0;">
-                        <select id="sel_line_${tId}" onchange="updateTable(${tId}); updateColor(${tId});" class="cell-dropdown"></select>
-                    </td>
-                </tr>
-                <tr>
-                    <td class="header-cell" style="width: 10%">Weight Slab</td>
-                    <td class="header-cell">Public Tariff<br>Rail Freight</td>
-                    <td class="header-cell">Railway Margins<br><span class="text-xs font-normal">(01-10-23) Including EIS Charges</span></td>
-                    <td class="header-cell">EIS Charges</td>
-                    <td class="header-cell">Discount from Haulage<br><span class="text-xs font-normal">(For Net billing) Amt</span></td>
-                    <td class="header-cell">Incentive<br><span class="text-xs font-normal">(CHA/FRW/SHIPPER) Amt</span></td>
-                    <td class="header-cell">Line Incentive</td>
-                    <td class="header-cell">BSS Discount</td>
-                    <td class="header-cell">Transport Subsidy<br>for OWPL/PSWC</td>
-                    <td class="header-cell">Transport Subsidy<br>Factory</td>
-                    <td class="header-cell">THC Subsidy<br>(WH Stuffing)</td>
-                    <td class="header-cell">THC Subsidy<br>(Factory)</td>
-                    <td class="header-cell">THC Subsidy<br>(Self Seal)</td>
-                    <td class="header-cell">Margin<br>(WH Stuffing)</td>
-                    <td class="header-cell">Margin<br>(Factory Stuff)</td>
-                    <td class="header-cell">Margin<br>(Self Seal)</td>
-                </tr>
+                <div class="flex items-start gap-3 mb-6" id="wrapper_${tId}">
+                    <input type="checkbox" class="table-delete-checkbox w-5 h-5 mt-2 cursor-pointer flex-shrink-0 accent-red-600" value="wrapper_${tId}" title="Select to delete this table">
+                    <div class="flex-grow w-full overflow-x-auto">
+                        <table class="data-table tariff-zoom" id="tariff_block_${tId}" style="margin-bottom: 0;">
+                            <colgroup>
+                                <col span="16" style="width: 6.25%;">
+                            </colgroup>
+                            <tbody>
+                                <tr>
+                                    <td colspan="3" class="label-cell">Shipping Line & Stream::</td>
+                                    <td colspan="3" id="lbl_stream_${tId}" class="font-bold text-blue-900 data-cell bg-yellow-200">COSCO-MUNDRA</td>
+                                    <td colspan="2" class="label-cell">Stuffing Location::</td>
+                                    <td colspan="3" id="td_type_${tId}" class="data-cell bg-yellow-200" style="padding: 0;">
+                                        <select id="sel_type_${tId}" onchange="updateTable(${tId}); updateColor(${tId});" class="cell-dropdown">
+                                            <option value="FACTORY">FACTORY</option>
+                                            <option value="OWPL">OWPL</option>
+                                            <option value="PSWC">PSWC</option>
+                                            <option value="Double -2x20&quot;">Double -2x20"</option>
+                                        </select>
+                                    </td>
+                                    <td colspan="2" class="label-cell">Line:</td>
+                                    <td colspan="3" class="data-cell bg-blue-50" style="padding: 0;">
+                                        <select id="sel_line_${tId}" onchange="updateTable(${tId}); updateColor(${tId});" class="cell-dropdown"></select>
+                                    </td>
+                                </tr>
+                        <tr>
+                            <td class="header-cell">Weight Slab</td>
+                            <td class="header-cell">Public Tariff<br>Rail Freight</td>
+                            <td class="header-cell">Railway Margins<br><span class="text-xs font-normal">(01-10-23) Including EIS Charges</span></td>
+                            <td class="header-cell">EIS Charges</td>
+                            <td class="header-cell">Discount from Haulage<br><span class="text-xs font-normal">(For Net billing) Amt</span></td>
+                            <td class="header-cell">Incentive<br><span class="text-xs font-normal">(CHA/FRW/SHIPPER) Amt</span></td>
+                            <td class="header-cell">Line Incentive</td>
+                            <td class="header-cell">BSS Discount</td>
+                            <td class="header-cell">Transport Subsidy<br>for OWPL/PSWC</td>
+                            <td class="header-cell">Transport Subsidy<br>Factory</td>
+                            <td class="header-cell">THC Subsidy<br>(WH Stuffing)</td>
+                            <td class="header-cell">THC Subsidy<br>(Factory)</td>
+                            <td class="header-cell">THC Subsidy<br>(Self Seal)</td>
+                            <td class="header-cell">Margin<br>(WH Stuffing)</td>
+                            <td class="header-cell">Margin<br>(Factory Stuff)</td>
+                            <td class="header-cell">Margin<br>(Self Seal)</td>
+                        </tr>
             `;
 
             for (let i = 0; i < 7; i++) {
@@ -583,38 +628,30 @@
                 const labelClass = i >= 5 ? 'bg-gray-200' : '';
                 
                 html += `
-                <tr>
-                    <td class="label-cell text-center ${labelClass}" contenteditable="true">${label}</td>
-                    <td class="data-cell ${rowClass}" id="pub_${tId}_${i}" contenteditable="true"></td>
-                    <td class="data-cell ${rowClass}" id="rm_${tId}_${i}" contenteditable="true"></td>
-                    <td class="data-cell font-bold text-gray-700 ${rowClass}" id="eis_${tId}_${i}" contenteditable="true"></td>
-                    <td class="data-cell bg-yellow-50" id="disc_${tId}_${i}" contenteditable="true" oninput="updateTable(${tId})">0</td>
-                    <td class="data-cell bg-yellow-50" id="inc_${tId}_${i}" contenteditable="true" oninput="updateTable(${tId})">0</td>
-                    <td class="data-cell ${rowClass}" id="slb_${tId}_${i}" contenteditable="true"></td>
-                    <td class="data-cell ${rowClass}" id="slr_${tId}_${i}" contenteditable="true"></td>
-                    <td class="data-cell ${rowClass}" id="sub_${tId}_${i}" contenteditable="true"></td>
-                    <td class="data-cell bg-yellow-50" id="subfac_${tId}_${i}" contenteditable="true" oninput="updateTable(${tId})">0</td>
-                    <td class="data-cell ${rowClass}" id="slw_${tId}_${i}" contenteditable="true"></td>
-                    <td class="data-cell ${rowClass}" id="slf_${tId}_${i}" contenteditable="true"></td>
-                    <td class="data-cell ${rowClass}" id="sls_${tId}_${i}" contenteditable="true"></td>
-                    <td class="data-cell font-bold bg-gray-100" id="mw_${tId}_${i}" contenteditable="true"></td>
-                    <td class="data-cell font-bold bg-gray-100" id="mf_${tId}_${i}" contenteditable="true"></td>
-                    <td class="data-cell font-bold bg-gray-100" id="ms_${tId}_${i}" contenteditable="true"></td>
-                </tr>`;
+                        <tr>
+                            <td class="label-cell text-center ${labelClass}" contenteditable="true">${label}</td>
+                            <td class="data-cell ${rowClass}" id="pub_${tId}_${i}" contenteditable="true"></td>
+                            <td class="data-cell ${rowClass}" id="rm_${tId}_${i}" contenteditable="true"></td>
+                            <td class="data-cell font-bold text-gray-700 ${rowClass}" id="eis_${tId}_${i}" contenteditable="true"></td>
+                            <td class="data-cell bg-yellow-50" id="disc_${tId}_${i}" contenteditable="true" oninput="updateTable(${tId})">0</td>
+                            <td class="data-cell bg-yellow-50" id="inc_${tId}_${i}" contenteditable="true" oninput="updateTable(${tId})">0</td>
+                            <td class="data-cell ${rowClass}" id="slb_${tId}_${i}" contenteditable="true"></td>
+                            <td class="data-cell ${rowClass}" id="slr_${tId}_${i}" contenteditable="true"></td>
+                            <td class="data-cell ${rowClass}" id="sub_${tId}_${i}" contenteditable="true"></td>
+                            <td class="data-cell bg-yellow-50" id="subfac_${tId}_${i}" contenteditable="true" oninput="updateTable(${tId})">0</td>
+                            <td class="data-cell ${rowClass}" id="slw_${tId}_${i}" contenteditable="true"></td>
+                            <td class="data-cell ${rowClass}" id="slf_${tId}_${i}" contenteditable="true"></td>
+                            <td class="data-cell ${rowClass}" id="sls_${tId}_${i}" contenteditable="true"></td>
+                            <td class="data-cell font-bold bg-gray-100" id="mw_${tId}_${i}" contenteditable="true"></td>
+                            <td class="data-cell font-bold bg-gray-100" id="mf_${tId}_${i}" contenteditable="true"></td>
+                            <td class="data-cell font-bold bg-gray-100" id="ms_${tId}_${i}" contenteditable="true"></td>
+                        </tr>`;
             }
 
-            html += `<tr><td colspan="16" style="border:none; height:15px;"></td></tr></tbody>`;
+            html += `</tbody></table></div></div>`;
 
-            // Append to main_tbody directly
-            tbody.insertAdjacentHTML('beforeend', html);
+            container.insertAdjacentHTML('beforeend', html);
 
-            // Shippers Box ki height dynamic expand karne ke liye rowSpan increase
-            const shippersBox = document.getElementById('shippers_content_box');
-            if(shippersBox && tableCount > 1) { 
-                shippersBox.rowSpan += 11; // Sirf tabhi expand karo jab 2nd table add ho rahi ho (1st par nahi)
-            }
-
-            // Populate Shipping Lines in Dropdown
             const selLine = document.getElementById(`sel_line_${tId}`);
             Object.keys(lineData).forEach(k => {
                 if (k !== 'CUSTOMER') {
@@ -626,22 +663,18 @@
                 }
             });
 
-            // Initialize values & colours
             updateColor(tId);
             updateTable(tId);
         }
 
-        // --- Enter Key Event Logic (Move Cursor Down) ---
         document.addEventListener('keydown', function(e) {
             if(e.key === 'Enter' && e.target.tagName === 'TD' && e.target.isContentEditable) {
-                e.preventDefault(); // Stop creating a new line in the cell
+                e.preventDefault(); 
                 const currentTd = e.target;
                 const currentRow = currentTd.parentElement;
                 
-                // Find column index
                 let cellIndex = Array.from(currentRow.children).indexOf(currentTd);
                 
-                // Find next row that has a cell at the same index
                 let nextRow = currentRow.nextElementSibling;
                 while(nextRow && nextRow.children.length <= cellIndex) {
                     nextRow = nextRow.nextElementSibling;
@@ -651,7 +684,6 @@
                     const nextCell = nextRow.children[cellIndex];
                     if(nextCell && nextCell.isContentEditable) {
                         nextCell.focus();
-                        // Select existing text so it gets overwritten automatically if typed
                         let range = document.createRange();
                         range.selectNodeContents(nextCell);
                         let sel = window.getSelection();
@@ -662,7 +694,6 @@
             }
         });
 
-        // --- Formula Bar Logic ---
         let activeCell = null;
         const formulaInput = document.getElementById('formula-input');
         
@@ -684,10 +715,9 @@
         formulaInput.addEventListener('input', function() {
             if (activeCell) {
                 activeCell.innerText = this.value;
-                // Update table logic if manual value changes
                 if (activeCell.id) {
                     const parts = activeCell.id.split('_');
-                    if (parts.length === 3) updateTable(parts[1]); // Parts: [prefix, tId, index]
+                    if (parts.length === 3) updateTable(parts[1]);
                 }
             }
         });
@@ -697,57 +727,209 @@
             if (activeCell) activeCell.focus();
         }
 
-        // --- Export to Excel with Exact Formatting ---
-        function exportToExcel() {
-            let tableHTML = document.getElementById("spreadsheet").outerHTML;
-            let tempDiv = document.createElement('div');
-            tempDiv.innerHTML = tableHTML;
-            
-            // Replace dropdowns with their selected text before export
-            let selects = tempDiv.querySelectorAll('select');
-            selects.forEach(sel => {
-                let text = sel.options[sel.selectedIndex]?.text || "";
-                let span = document.createElement('span');
-                span.innerText = text;
-                span.style.fontWeight = "bold";
-                sel.parentNode.replaceChild(span, sel);
+        function exportToExcelXLSX() {
+            const wb = XLSX.utils.book_new();
+
+            function rgbToHex(rgbStr) {
+                if (!rgbStr || rgbStr === 'transparent' || rgbStr === 'rgba(0, 0, 0, 0)') return null;
+                const match = rgbStr.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+                if (match) {
+                    return [match[1], match[2], match[3]]
+                        .map(x => parseInt(x).toString(16).padStart(2, '0'))
+                        .join('').toUpperCase();
+                }
+                const hexMatch = rgbStr.match(/#?([a-f\d]{6}|[a-f\d]{3})/i);
+                if (hexMatch) {
+                    let hex = hexMatch[1];
+                    return hex.length === 3 ? hex.split('').map(h => h + h).join('') : hex;
+                }
+                return null;
+            }
+
+            let globalMaxCol = 0;
+
+            // Helper: Append one HTML table to worksheet with colspan & styling support
+            function appendTableToSheet(ws, tableEl, startRow, isSmaller = false) {
+                let rowIdx = startRow;
+                const trs = tableEl.querySelectorAll('tr');
+
+                if (!ws['!merges']) ws['!merges'] = [];
+
+                trs.forEach(tr => {
+                    let colIdx = 0;
+                    const tds = tr.querySelectorAll('td, th');
+
+                    tds.forEach(td => {
+                        // Skip columns occupied by previous rowspans/colspans
+                        while (ws[XLSX.utils.encode_cell({ c: colIdx, r: rowIdx })]) {
+                            colIdx++;
+                        }
+
+                        // Check if it's a select element inside
+                        let text = td.innerText.trim();
+                        const selectEl = td.querySelector('select');
+                        if (selectEl) {
+                            text = selectEl.options[selectEl.selectedIndex].text;
+                        }
+
+                        const cellRef = XLSX.utils.encode_cell({ c: colIdx, r: rowIdx });
+                        ws[cellRef] = { v: text, t: 's' };
+
+                        const style = {};
+                        const compStyle = window.getComputedStyle(td);
+
+                        // Set base font size (IsSmaller parameter passed true for 2nd table)
+                        style.font = { sz: isSmaller ? 9 : 11 };
+
+                        // Background color (Handling Tailwind classes through ComputedStyle)
+                        const bgColor = td.style.backgroundColor || compStyle.backgroundColor;
+                        const hexBg = rgbToHex(bgColor);
+                        if (hexBg && hexBg !== 'FFFFFF' && hexBg !== '000000') {
+                            style.fill = { fgColor: { rgb: hexBg } };
+                        }
+
+                        // Text color (Allow white color FFFFFF for title block)
+                        const colorStr = td.style.color || compStyle.color;
+                        const hexColor = rgbToHex(colorStr);
+                        if (hexColor && hexColor !== '000000' && (td.style.color || td.classList.contains('text-red-600') || td.classList.contains('text-blue-900') || hexColor === 'FFFFFF')) {
+                            style.font.color = { rgb: hexColor };
+                        }
+
+                        // Bold / Italic
+                        const fw = td.style.fontWeight || compStyle.fontWeight;
+                        const isBold = (fw === 'bold' || fw === '700' || fw === 'bolder' || parseInt(fw, 10) >= 700 || td.classList.contains('font-bold'));
+                        if (isBold) style.font.bold = true;
+
+                        if (td.style.fontStyle === 'italic' || compStyle.fontStyle === 'italic') {
+                            style.font.italic = true;
+                        }
+
+                        // Title cell specific sizing (Thoda highlight ke liye 14sz)
+                        if (td.classList.contains('title-cell')) {
+                            style.font.sz = 14;
+                        }
+
+                        // Alignment
+                        const align = td.style.textAlign || compStyle.textAlign || '';
+                        if (align === 'center' || td.classList.contains('text-center') || td.classList.contains('data-cell')) {
+                            style.alignment = { horizontal: 'center', vertical: 'center', wrapText: true };
+                        } else if (align === 'right' || td.classList.contains('text-right')) {
+                            style.alignment = { horizontal: 'right', vertical: 'center', wrapText: true };
+                        } else {
+                            style.alignment = { vertical: 'center', wrapText: true };
+                        }
+
+                        // Borders
+                        style.border = {
+                            top:    { style: 'thin', color: { rgb: '888888' } },
+                            bottom: { style: 'thin', color: { rgb: '888888' } },
+                            left:   { style: 'thin', color: { rgb: '888888' } },
+                            right:  { style: 'thin', color: { rgb: '888888' } }
+                        };
+
+                        if (Object.keys(style).length > 0) {
+                            ws[cellRef].s = style;
+                        }
+
+                        const colspan = parseInt(td.getAttribute('colspan') || '1', 10);
+                        const rowspan = parseInt(td.getAttribute('rowspan') || '1', 10);
+
+                        if (colspan > 1 || rowspan > 1) {
+                            ws['!merges'].push({
+                                s: { r: rowIdx, c: colIdx },
+                                e: { r: rowIdx + rowspan - 1, c: colIdx + colspan - 1 }
+                            });
+
+                            // Fill merged cells with empty values and styling so borders render perfectly
+                            for (let rr = 0; rr < rowspan; rr++) {
+                                for (let cc = 0; cc < colspan; cc++) {
+                                    if (rr === 0 && cc === 0) continue;
+                                    const emptyCellRef = XLSX.utils.encode_cell({ c: colIdx + cc, r: rowIdx + rr });
+                                    ws[emptyCellRef] = { v: '', t: 's', s: style };
+                                }
+                            }
+                        }
+
+                        if (colIdx + colspan - 1 > globalMaxCol) {
+                            globalMaxCol = colIdx + colspan - 1;
+                        }
+
+                        colIdx += colspan;
+                    });
+
+                    rowIdx++;
+                });
+
+                return rowIdx + 2; // spacing after each table
+            }
+
+            // Worksheet 1: Approval Form
+            const ws1 = {}; // Initialize properly as empty object
+            let currentRow = 0;
+
+            const topTable = document.getElementById('top_info_table');
+            if (topTable) {
+                // Pass false for normal size
+                currentRow = appendTableToSheet(ws1, topTable, currentRow, false);
+            }
+
+            const tariffTables = document.querySelectorAll('#dynamic_tables_container table.data-table');
+            tariffTables.forEach(tbl => {
+                // Pass true for smaller size (2nd table)
+                currentRow = appendTableToSheet(ws1, tbl, currentRow, true);
             });
-            
-            // Generate clean HTML compatible with MS Excel
-            let formattedHtml = `<html xmlns:x="urn:schemas-microsoft-com:office:excel">
-                <head>
-                    <meta charset="utf-8">
-                    <style>
-                        table { border-collapse: collapse; width: 100%; margin-bottom: 20px;}
-                        td, th { border: 1px solid #888; font-size: 12px; font-family: sans-serif; text-align: center; vertical-align: middle; white-space: pre-wrap; word-wrap: break-word;}
-                        .label-cell { background-color: #e9ecef; font-weight: bold; }
-                        .header-cell { background-color: #dbeafe; font-weight: bold; color: #1e3a8a; }
-                        .shippers-box-header { background-color: #fef08a; border: 2px solid #1e3a8a; }
-                        .shippers-box-content { border: 2px solid #1e3a8a; vertical-align: top; text-align: left; }
-                        .bg-yellow-50 { background-color: #fefce8; }
-                        .bg-gray-100 { background-color: #f3f4f6; }
-                        .bg-gray-200 { background-color: #e5e7eb; }
-                        .bg-gray-50 { background-color: #f9fafb; }
-                        .bg-yellow-200 { background-color: #fef08a; }
-                        .bg-green-200 { background-color: #bbf7d0; }
-                        .bg-blue-200 { background-color: #bfdbfe; }
-                        .bg-purple-200 { background-color: #e9d5ff; }
-                        .text-red-600 { color: #dc2626; }
-                        .text-blue-900 { color: #1e3a8a; }
-                        .title-cell { background-color: #1e3a8a; color: white; font-size: 16px; font-weight: bold; }
-                    </style>
-                </head>
-                <body>${tempDiv.innerHTML}</body>
-            </html>`;
-            
-            let blob = new Blob([formattedHtml], { type: "application/vnd.ms-excel" });
-            let url = URL.createObjectURL(blob);
-            let a = document.createElement("a");
-            a.href = url;
-            a.download = "Cost_Approval_Format.xls";
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
+
+            // CRITICAL FIX: Set !ref range so SheetJS knows the sheet is not empty
+            ws1['!ref'] = XLSX.utils.encode_range({
+                s: { c: 0, r: 0 },
+                e: { c: Math.max(globalMaxCol, 15), r: currentRow }
+            });
+
+            ws1['!cols'] = Array(Math.max(globalMaxCol + 1, 16)).fill({ wch: 14 });
+
+            XLSX.utils.book_append_sheet(wb, ws1, "Approval Form");
+
+            // Worksheet 2: Shippers Name
+            const shippersCell = document.getElementById('shippers_content_box');
+            const shippersLines = shippersCell ? shippersCell.innerText.trim().split('\n').filter(l => l.trim()) : [];
+            const shippersData = [
+                ["Shippers Name"],
+                ...shippersLines.map(name => [name])
+            ];
+            const ws2 = XLSX.utils.aoa_to_sheet(shippersData);
+
+            ws2['A1'].s = {
+                font: { bold: true, sz: 14 },
+                fill: { fgColor: { rgb: "FEF08A" } },
+                alignment: { horizontal: 'center', vertical: 'center' },
+                border: {
+                    top:    { style: 'medium', color: { rgb: '1E3A8A' } },
+                    bottom: { style: 'medium', color: { rgb: '1E3A8A' } },
+                    left:   { style: 'medium', color: { rgb: '1E3A8A' } },
+                    right:  { style: 'medium', color: { rgb: '1E3A8A' } }
+                }
+            };
+
+            for (let r = 1; r < shippersData.length; r++) {
+                const ref = XLSX.utils.encode_cell({ c: 0, r });
+                if (ws2[ref]) {
+                    ws2[ref].s = {
+                        alignment: { vertical: 'top', wrapText: true },
+                        border: {
+                            top:    { style: 'thin', color: { rgb: '1E3A8A' } },
+                            bottom: { style: 'thin', color: { rgb: '1E3A8A' } },
+                            left:   { style: 'medium', color: { rgb: '1E3A8A' } },
+                            right:  { style: 'medium', color: { rgb: '1E3A8A' } }
+                        }
+                    };
+                }
+            }
+
+            ws2['!cols'] = [{ wch: 60 }];
+
+            XLSX.utils.book_append_sheet(wb, ws2, "Shippers Name");
+
+            XLSX.writeFile(wb, "Cost_Approval_Format.xlsx");
         }
     </script>
 </body>
