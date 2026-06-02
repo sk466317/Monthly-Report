@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2116,6 +2117,32 @@
             : { header: 'D9F2D9', grand: 'B7E1B0', firstCol: 'EDF7ED' };
     }
 
+    function getExportCellText(cell) {
+        let text = cell.innerText.trim();
+        return text === '-' ? '' : text;
+    }
+
+    function coerceWorkbookCellValue(value, columnIndex, isHeaderCell) {
+        if (isHeaderCell || columnIndex === 0 || value === '') return value;
+
+        let normalized = String(value).replace(/\u00a0/g, ' ').trim();
+        let compact = normalized.replace(/,/g, '');
+        if (/^-?\d+(?:\.\d+)?$/.test(compact)) return Number(compact);
+        return normalized;
+    }
+
+    function captureTableRowsForWorkbook(table) {
+        return Array.from(table.querySelectorAll('tr')).map(tr =>
+            Array.from(tr.querySelectorAll('th,td')).map((cell, columnIndex) =>
+                coerceWorkbookCellValue(
+                    getExportCellText(cell),
+                    columnIndex,
+                    cell.tagName.toLowerCase() === 'th'
+                )
+            )
+        );
+    }
+
     function styleWorksheet(worksheet, rowCount, colCount, reportType) {
         let theme = getWorkbookTheme(reportType);
         let border = {
@@ -2222,9 +2249,7 @@
         let table = document.getElementById('summaryTable');
         if (!table) return [];
 
-        return Array.from(table.querySelectorAll('tr')).map(tr =>
-            Array.from(tr.querySelectorAll('th,td')).map(cell => cell.innerText.trim() === '-' ? '' : cell.innerText.trim())
-        );
+        return captureTableRowsForWorkbook(table);
     }
 
     function setWorksheetColumns(worksheet, rows) {
@@ -2268,9 +2293,7 @@
             let table = document.getElementById('summaryTable');
             if (!table) return;
 
-            let tableRows = Array.from(table.querySelectorAll('tr')).map(tr =>
-                Array.from(tr.querySelectorAll('th,td')).map(cell => cell.innerText.trim() === '-' ? '' : cell.innerText.trim())
-            );
+            let tableRows = captureTableRowsForWorkbook(table);
             let rows = [[def.label], [], ...tableRows];
 
             let sheetName = sanitizeWorksheetName(def.label, usedNames);
